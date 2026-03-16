@@ -23,8 +23,7 @@ from database import Database
 
 # ─── Настройки (берём из переменных окружения) ────────────────
 BOT_TOKEN = os.getenv("BOT_TOKEN", "ВАШ_ТОКЕН_ЗДЕСЬ")
-ADMIN_ID  = int(os.getenv("ADMIN_ID", "123456789"))
-PORT      = int(os.getenv("PORT", "8080"))
+ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "123456789").split(",")]PORT      = int(os.getenv("PORT", "8080"))
 BASE_URL  = os.getenv("BASE_URL", f"http://localhost:{PORT}")  # Ваш Railway домен
 
 logging.basicConfig(level=logging.INFO)
@@ -69,7 +68,7 @@ def cancel_kb() -> ReplyKeyboardMarkup:
 
 
 def is_admin(user_id: int) -> bool:
-    return user_id == ADMIN_ID
+    return user_id in ADMIN_IDS
 
 
 # ─── /start ───────────────────────────────────────────────────
@@ -330,12 +329,12 @@ async def order_address(message: Message, state: FSMContext):
         f"🛒 Состав:\n{items_text}\n\n"
         f"💰 Итого: <b>{total} ₽</b>"
     )
-    try:
-        await bot.send_message(ADMIN_ID, order_msg, parse_mode="HTML")
-    except Exception as e:
-        log.warning(f"Could not notify admin: {e}")
-
-    carts[uid] = []
+  try:
+    for admin_id in ADMIN_IDS:
+        await bot.send_message(admin_id, order_msg, parse_mode="HTML")
+except Exception as e:
+    log.warning(f"Could not notify admin: {e}")
+carts[uid] = []
     await message.answer(
         "✅ <b>Заказ оформлен!</b>\nМы свяжемся с вами в ближайшее время. Спасибо! 🙏",
         parse_mode="HTML",
