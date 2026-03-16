@@ -23,7 +23,8 @@ from database import Database
 
 # ─── Настройки (берём из переменных окружения) ────────────────
 BOT_TOKEN = os.getenv("BOT_TOKEN", "ВАШ_ТОКЕН_ЗДЕСЬ")
-ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "123456789").split(",")]PORT      = int(os.getenv("PORT", "8080"))
+ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "123456789").split(",")]
+PORT      = int(os.getenv("PORT", "8080"))
 BASE_URL  = os.getenv("BASE_URL", f"http://localhost:{PORT}")  # Ваш Railway домен
 
 logging.basicConfig(level=logging.INFO)
