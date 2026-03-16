@@ -21,11 +21,11 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from database import Database
 
-# ─── Настройки (берём из переменных окружения) ────────────────
-BOT_TOKEN = os.getenv("BOT_TOKEN", "ВАШ_ТОКЕН_ЗДЕСЬ")
+# ─── Настройки ────────────────────────────────────────────────
+BOT_TOKEN = os.getenv("BOT_TOKEN", "ВАШ_ТОКЕН")
 ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "123456789").split(",")]
 PORT      = int(os.getenv("PORT", "8080"))
-BASE_URL  = os.getenv("BASE_URL", f"http://localhost:{PORT}")  # Ваш Railway домен
+BASE_URL  = os.getenv("BASE_URL", f"http://localhost:{PORT}")
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ dp  = Dispatcher(storage=MemoryStorage())
 db  = Database()
 
 
-# ─── FSM: добавление товара (только для админа) ───────────────
+# ─── FSM: добавление товара ───────────────────────────────────
 class AddProduct(StatesGroup):
     photo       = State()
     name        = State()
@@ -44,8 +44,19 @@ class AddProduct(StatesGroup):
     sizes       = State()
 
 
-# ─── Клавиатуры ───────────────────────────────────────────────
-def main_menu(is_admin=False) -> ReplyKeyboardMarkup:
+# ─── FSM: оформление заказа ───────────────────────────────────
+class OrderState(StatesGroup):
+    name    = State()
+    phone   = State()
+    address = State()
+
+
+# ─── Вспомогательные функции ──────────────────────────────────
+def is_admin(user_id: int) -> bool:
+    return user_id in ADMIN_IDS
+
+
+def main_menu(is_admin_user=False) -> ReplyKeyboardMarkup:
     rows = [
         [KeyboardButton(
             text="🛍 Открыть каталог",
@@ -56,10 +67,13 @@ def main_menu(is_admin=False) -> ReplyKeyboardMarkup:
         [KeyboardButton(text="ℹ️ О нас"),
          KeyboardButton(text="📞 Контакты")],
     ]
-    if is_admin:
-        rows.append([KeyboardButton(text="➕ Добавить товар"),
-                     KeyboardButton(text="📋 Все товары")])
+    if is_admin_user:
+        rows.append([
+            KeyboardButton(text="➕ Добавить товар"),
+            KeyboardButton(text="📋 Все товары")
+        ])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+
 
 def cancel_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
@@ -68,8 +82,15 @@ def cancel_kb() -> ReplyKeyboardMarkup:
     )
 
 
-def is_admin(user_id: int) -> bool:
-    return user_id in ADMIN_IDS
+def cart_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Оформить заказ",  callback_data="checkout")],
+        [InlineKeyboardButton(text="🗑 Очистить корзину", callback_data="clear_cart")],
+    ])
+
+
+# Корзины в памяти
+carts: dict[int, list] = {}
 
 
 # ─── /start ───────────────────────────────────────────────────
@@ -104,8 +125,18 @@ async def cmd_help(message: Message):
     await message.answer(text, parse_mode="HTML")
 
 
+# ─── Отмена ───────────────────────────────────────────────────
+@dp.message(F.text == "❌ Отмена")
+async def cancel_handler(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "Действие отменено.",
+        reply_markup=main_menu(is_admin(message.from_user.id))
+    )
+
+
 # ══════════════════════════════════════════════════════════════
-#  БЛОК АДМИНИСТРАТОРА: добавление товара
+#  БЛОК АДМИНИСТРАТОРА
 # ══════════════════════════════════════════════════════════════
 
 @dp.message(F.text == "➕ Добавить товар")
@@ -118,15 +149,6 @@ async def admin_add_start(message: Message, state: FSMContext):
         reply_markup=cancel_kb()
     )
     await state.set_state(AddProduct.photo)
-
-
-@dp.message(F.text == "❌ Отмена")
-async def cancel_handler(message: Message, state: FSMContext):
-    await state.clear()
-    await message.answer(
-        "Действие отменено.",
-        reply_markup=main_menu(is_admin(message.from_user.id))
-    )
 
 
 @dp.message(AddProduct.photo, F.photo)
@@ -165,7 +187,6 @@ async def add_description(message: Message, state: FSMContext):
     await message.answer(
         "📐 Введите <b>доступные размеры</b> через запятую\n"
         "Например: <code>XS, S, M, L, XL</code>\n"
-        "Или <code>36, 37, 38, 39, 40</code>\n"
         "Или напишите <code>-</code> если размеры не нужны.",
         parse_mode="HTML"
     )
@@ -200,10 +221,8 @@ async def add_sizes(message: Message, state: FSMContext):
         parse_mode="HTML",
         reply_markup=main_menu(True)
     )
-    log.info(f"Admin added product #{product_id}: {data['name']}")
 
 
-# ── Список товаров (для админа) ───────────────────────────────
 @dp.message(F.text == "📋 Все товары")
 async def admin_list_products(message: Message):
     if not is_admin(message.from_user.id):
@@ -226,8 +245,10 @@ async def admin_list_products(message: Message):
             InlineKeyboardButton(text="🗑 Удалить", callback_data=f"del_{p['id']}")
         ]])
         try:
-            await message.answer_photo(photo=p["photo_id"], caption=caption,
-                                       parse_mode="HTML", reply_markup=kb)
+            await message.answer_photo(
+                photo=p["photo_id"], caption=caption,
+                parse_mode="HTML", reply_markup=kb
+            )
         except Exception:
             await message.answer(caption, parse_mode="HTML", reply_markup=kb)
 
@@ -246,22 +267,6 @@ async def delete_product(callback: CallbackQuery):
 # ══════════════════════════════════════════════════════════════
 #  БЛОК ПОКУПАТЕЛЯ
 # ══════════════════════════════════════════════════════════════
-
-# Корзины в памяти: {user_id: [{id, name, price, qty, size}]}
-carts: dict[int, list] = {}
-
-def cart_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Оформить заказ",  callback_data="checkout")],
-        [InlineKeyboardButton(text="🗑 Очистить корзину", callback_data="clear_cart")],
-    ])
-
-
-class OrderState(StatesGroup):
-    name    = State()
-    phone   = State()
-    address = State()
-
 
 @dp.message(F.text == "🛒 Корзина")
 async def show_cart(message: Message):
@@ -291,8 +296,11 @@ async def checkout_start(callback: CallbackQuery, state: FSMContext):
     if not carts.get(callback.from_user.id):
         await callback.answer("Корзина пуста!")
         return
-    await callback.message.answer("📝 Введите ваше <b>имя</b>:", parse_mode="HTML",
-                                  reply_markup=cancel_kb())
+    await callback.message.answer(
+        "📝 Введите ваше <b>имя</b>:",
+        parse_mode="HTML",
+        reply_markup=cancel_kb()
+    )
     await state.set_state(OrderState.name)
 
 
@@ -330,12 +338,14 @@ async def order_address(message: Message, state: FSMContext):
         f"🛒 Состав:\n{items_text}\n\n"
         f"💰 Итого: <b>{total} ₽</b>"
     )
-  try:
-    for admin_id in ADMIN_IDS:
-        await bot.send_message(admin_id, order_msg, parse_mode="HTML")
-except Exception as e:
-    log.warning(f"Could not notify admin: {e}")
-carts[uid] = []
+
+    try:
+        for admin_id in ADMIN_IDS:
+            await bot.send_message(admin_id, order_msg, parse_mode="HTML")
+    except Exception as e:
+        log.warning(f"Could not notify admin: {e}")
+
+    carts[uid] = []
     await message.answer(
         "✅ <b>Заказ оформлен!</b>\nМы свяжемся с вами в ближайшее время. Спасибо! 🙏",
         parse_mode="HTML",
@@ -343,7 +353,6 @@ carts[uid] = []
     )
 
 
-# ── Данные из Mini App (добавление в корзину) ─────────────────
 @dp.message(F.web_app_data)
 async def handle_webapp_data(message: Message):
     try:
@@ -353,7 +362,6 @@ async def handle_webapp_data(message: Message):
 
         if data.get("action") == "add":
             item = data["item"]
-            # Найти существующий с тем же id и размером
             for c in cart:
                 if c["id"] == item["id"] and c.get("size") == item.get("size"):
                     c["qty"] += item.get("qty", 1)
@@ -376,7 +384,6 @@ async def handle_webapp_data(message: Message):
             )
     except Exception as e:
         log.error(f"WebApp data error: {e}")
-        await message.answer("Произошла ошибка при обработке данных.")
 
 
 @dp.message(F.text == "ℹ️ О нас")
@@ -386,6 +393,7 @@ async def about(message: Message):
         parse_mode="HTML"
     )
 
+
 @dp.message(F.text == "📞 Контакты")
 async def contacts(message: Message):
     await message.answer(
@@ -393,13 +401,14 @@ async def contacts(message: Message):
         parse_mode="HTML"
     )
 
+
 @dp.message(F.text == "📦 Мои заказы")
 async def my_orders(message: Message):
     await message.answer("📦 История заказов пока пуста.")
 
 
 # ══════════════════════════════════════════════════════════════
-#  AIOHTTP ВЕБ-СЕРВЕР (API + Mini App)
+#  ВЕБ-СЕРВЕР
 # ══════════════════════════════════════════════════════════════
 
 async def api_products(request: web.Request):
@@ -408,7 +417,6 @@ async def api_products(request: web.Request):
 
 
 async def api_photo(request: web.Request):
-    """Проксирует фото из Telegram CDN (чтобы не хранить файлы у себя)."""
     file_id = request.match_info["file_id"]
     try:
         async with aiohttp.ClientSession() as session:
@@ -449,7 +457,6 @@ def make_app() -> web.Application:
 async def main():
     await db.init()
 
-    # Запускаем aiohttp сервер
     app = make_app()
     runner = web.AppRunner(app)
     await runner.setup()
@@ -457,9 +464,9 @@ async def main():
     await site.start()
     log.info(f"Web server started on port {PORT}")
 
-    # Запускаем бот (polling)
     log.info("Bot polling started")
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
