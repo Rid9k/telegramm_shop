@@ -397,7 +397,7 @@ async def about(message: Message):
 @dp.message(F.text == "📞 Контакты")
 async def contacts(message: Message):
     await message.answer(
-        "📞 <b>Контакты</b>\n\n@Isochrone_supply \n@O0XPANA",
+        "📞 <b>Контакты</b>\n\nВопросы, покупка \n@Isochrone_supply \n@O0XPANA",
         parse_mode="HTML"
     )
 
