@@ -12,7 +12,7 @@ from aiogram.types import (
     Message, CallbackQuery,
     InlineKeyboardMarkup, InlineKeyboardButton,
     ReplyKeyboardMarkup, KeyboardButton,
-    WebAppInfo, ReplyKeyboardRemove,
+    WebAppInfo,
 )
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
@@ -44,13 +44,6 @@ class AddProduct(StatesGroup):
     sizes       = State()
 
 
-# ─── FSM: оформление заказа ───────────────────────────────────
-class OrderState(StatesGroup):
-    name    = State()
-    phone   = State()
-    address = State()
-
-
 # ─── Вспомогательные функции ──────────────────────────────────
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
@@ -62,8 +55,6 @@ def main_menu(is_admin_user=False) -> ReplyKeyboardMarkup:
             text="🛍 Открыть каталог",
             web_app=WebAppInfo(url=f"{BASE_URL}/catalog")
         )],
-        [KeyboardButton(text="🛒 Корзина"),
-         KeyboardButton(text="📦 Мои заказы")],
         [KeyboardButton(text="ℹ️ О нас"),
          KeyboardButton(text="📞 Контакты")],
     ]
@@ -80,17 +71,6 @@ def cancel_kb() -> ReplyKeyboardMarkup:
         keyboard=[[KeyboardButton(text="❌ Отмена")]],
         resize_keyboard=True
     )
-
-
-def cart_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Оформить заказ",  callback_data="checkout")],
-        [InlineKeyboardButton(text="🗑 Очистить корзину", callback_data="clear_cart")],
-    ])
-
-
-# Корзины в памяти
-carts: dict[int, list] = {}
 
 
 # ─── /start ───────────────────────────────────────────────────
@@ -113,8 +93,8 @@ async def cmd_help(message: Message):
     text = (
         "📖 <b>Команды бота:</b>\n\n"
         "🛍 <b>Открыть каталог</b> — Mini App с товарами\n"
-        "🛒 <b>Корзина</b> — выбранные товары\n"
-        "📦 <b>Мои заказы</b> — история\n"
+        "ℹ️ <b>О нас</b> — информация о магазине\n"
+        "📞 <b>Контакты</b> — связаться с нами\n"
     )
     if is_admin(message.from_user.id):
         text += (
@@ -265,146 +245,31 @@ async def delete_product(callback: CallbackQuery):
 
 
 # ══════════════════════════════════════════════════════════════
-#  БЛОК ПОКУПАТЕЛЯ
+#  ИНФОРМАЦИОННЫЕ РАЗДЕЛЫ
 # ══════════════════════════════════════════════════════════════
 
-@dp.message(F.text == "🛒 Корзина")
-async def show_cart(message: Message):
-    cart = carts.get(message.from_user.id, [])
-    if not cart:
-        await message.answer("🛒 Корзина пуста. Добавьте товары через каталог!")
-        return
-    text = "🛒 <b>Ваша корзина:</b>\n\n"
-    total = 0
-    for item in cart:
-        sub = item["price"] * item["qty"]
-        total += sub
-        size_text = f" (размер: {item['size']})" if item.get("size") else ""
-        text += f"• {item['name']}{size_text} × {item['qty']} = {sub} ₽\n"
-    text += f"\n💰 <b>Итого: {total} ₽</b>"
-    await message.answer(text, parse_mode="HTML", reply_markup=cart_keyboard())
-
-
-@dp.callback_query(F.data == "clear_cart")
-async def clear_cart(callback: CallbackQuery):
-    carts[callback.from_user.id] = []
-    await callback.message.edit_text("🗑 Корзина очищена.")
-
-
-@dp.callback_query(F.data == "checkout")
-async def checkout_start(callback: CallbackQuery, state: FSMContext):
-    if not carts.get(callback.from_user.id):
-        await callback.answer("Корзина пуста!")
-        return
-    await callback.message.answer(
-        "📝 Введите ваше <b>имя</b>:",
-        parse_mode="HTML",
-        reply_markup=cancel_kb()
-    )
-    await state.set_state(OrderState.name)
-
-
-@dp.message(OrderState.name, F.text)
-async def order_name(message: Message, state: FSMContext):
-    await state.update_data(name=message.text)
-    await message.answer("📱 Введите <b>номер телефона или телеграмм ник</b>:", parse_mode="HTML")
-    await state.set_state(OrderState.phone)
-
-
-@dp.message(OrderState.phone, F.text)
-async def order_phone(message: Message, state: FSMContext):
-    await state.update_data(phone=message.text)
-    await message.answer("🏠 Введите <b>город доставки</b>:", parse_mode="HTML")
-    await state.set_state(OrderState.address)
-
-
-@dp.message(OrderState.address, F.text)
-async def order_address(message: Message, state: FSMContext):
-    data  = await state.get_data()
-    await state.clear()
-    uid   = message.from_user.id
-    cart  = carts.get(uid, [])
-    total = sum(i["price"] * i["qty"] for i in cart)
-
-    items_text = "\n".join(
-        f"  • {i['name']}" + (f" ({i['size']})" if i.get("size") else "") + f" × {i['qty']}"
-        for i in cart
-    )
-    order_msg = (
-        f"🆕 <b>Новый заказ!</b>\n\n"
-        f"👤 {data['name']}\n"
-        f"📱 {data['phone']}\n"
-        f"🏠 {message.text}\n\n"
-        f"🛒 Состав:\n{items_text}\n\n"
-        f"💰 Итого: <b>{total} ₽</b>"
-    )
-
-    try:
-        for admin_id in ADMIN_IDS:
-            await bot.send_message(admin_id, order_msg, parse_mode="HTML")
-    except Exception as e:
-        log.warning(f"Could not notify admin: {e}")
-
-    carts[uid] = []
-    await message.answer(
-        "✅ <b>Заказ оформлен!</b>\nМы свяжемся с вами в ближайшее время. Спасибо! 🙏",
-        parse_mode="HTML",
-        reply_markup=main_menu(is_admin(uid))
-    )
-
-
-@dp.message(F.web_app_data)
-async def handle_webapp_data(message: Message):
-    try:
-        data = json.loads(message.web_app_data.data)
-        uid  = message.from_user.id
-        cart = carts.setdefault(uid, [])
-
-        if data.get("action") == "add":
-            item = data["item"]
-            for c in cart:
-                if c["id"] == item["id"] and c.get("size") == item.get("size"):
-                    c["qty"] += item.get("qty", 1)
-                    await message.answer(
-                        f"✅ <b>{item['name']}</b> обновлён в корзине!",
-                        parse_mode="HTML"
-                    )
-                    return
-            cart.append({
-                "id":    item["id"],
-                "name":  item["name"],
-                "price": item["price"],
-                "qty":   item.get("qty", 1),
-                "size":  item.get("size", ""),
-            })
-            await message.answer(
-                f"✅ <b>{item['name']}</b> добавлен в корзину!\n"
-                "Нажмите «🛒 Корзина» чтобы оформить заказ.",
-                parse_mode="HTML"
-            )
-    except Exception as e:
-        log.error(f"WebApp data error: {e}")
-
-
 @dp.message(F.text == "ℹ️ О нас")
-async def about(message: Message):
-    await message.answer(
-        "🏪 <b>О нашем магазине</b>\n\nБолее 300 успешных сделок🤝 \nГарантия возврата 14 дней ✅ \nЛюбые способы доставки📦 \nДоставлю все что угодно из разных стран мира🚚 \nВозврата нет❌ \nРеклама 900₽/24ч, 4100₽/7д",
-        parse_mode="HTML"
-    )
 
+async def about(message: Message):
+
+    await message.answer(
+
+        "🏪 <b>О нашем магазине</b>\n\nБолее 300 успешных сделок🤝 \nГарантия возврата 14 дней ✅ \nЛюбые способы доставки📦 \nДоставлю все что угодно из разных стран мира🚚 \nВозврата нет❌ \nРеклама 900₽/24ч, 4100₽/7д",
+
+        parse_mode="HTML"
+
+    )
 
 @dp.message(F.text == "📞 Контакты")
+
 async def contacts(message: Message):
+
     await message.answer(
+
         "📞 <b>Контакты</b>\n\nВопросы, покупка \n@Isochrone_supply \n@O0XPANA",
+
         parse_mode="HTML"
     )
-
-
-@dp.message(F.text == "📦 Мои заказы")
-async def my_orders(message: Message):
-    await message.answer("📦 История заказов пока пуста.")
 
 
 # ══════════════════════════════════════════════════════════════
