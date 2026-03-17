@@ -307,14 +307,14 @@ async def checkout_start(callback: CallbackQuery, state: FSMContext):
 @dp.message(OrderState.name, F.text)
 async def order_name(message: Message, state: FSMContext):
     await state.update_data(name=message.text)
-    await message.answer("📱 Введите <b>номер телефона</b>:", parse_mode="HTML")
+    await message.answer("📱 Введите <b>номер телефона или телеграмм ник</b>:", parse_mode="HTML")
     await state.set_state(OrderState.phone)
 
 
 @dp.message(OrderState.phone, F.text)
 async def order_phone(message: Message, state: FSMContext):
     await state.update_data(phone=message.text)
-    await message.answer("🏠 Введите <b>адрес доставки</b>:", parse_mode="HTML")
+    await message.answer("🏠 Введите <b>город доставки</b>:", parse_mode="HTML")
     await state.set_state(OrderState.address)
 
 
@@ -389,7 +389,7 @@ async def handle_webapp_data(message: Message):
 @dp.message(F.text == "ℹ️ О нас")
 async def about(message: Message):
     await message.answer(
-        "🏪 <b>О нашем магазине</b>\n\nДоставка по всей России 🚚\nГарантия возврата 14 дней ✅",
+        "🏪 <b>О нашем магазине</b>\n\nБолее 300 успешных сделок🤝 \nГарантия возврата 14 дней ✅ \nЛюбые способы доставки📦 \nДоставлю все что угодно из разных стран мира🚚 \nВозврата нет❌ \nРеклама 900₽/24ч, 4100₽/7д",
         parse_mode="HTML"
     )
 
@@ -397,7 +397,7 @@ async def about(message: Message):
 @dp.message(F.text == "📞 Контакты")
 async def contacts(message: Message):
     await message.answer(
-        "📞 <b>Контакты</b>\n\n📱 +7 (999) 000-00-00\n📧 shop@example.com",
+        "📞 <b>Контакты</b>\n\n@Isochrone_supply \n@O0XPANA",
         parse_mode="HTML"
     )
 
